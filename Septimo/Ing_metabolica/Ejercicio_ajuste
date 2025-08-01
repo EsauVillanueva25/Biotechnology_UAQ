@@ -1,0 +1,62 @@
+# Recta de ajuste lineal 
+!pip install matplotlib
+# Construimos el conjunto x y y
+x = set(range(1,8))
+y = {0.5, 2.5, 2, 4, 3.5, 6, 5.5}
+print(x)
+print(y)
+# Creamos la figura
+import matplotlib.pyplot as plt
+
+# Convertimos los conjuntos a listas
+x_list = list(x)
+y_list = list(y)
+
+# Calculamos el ajuste lineal
+coeficientes = np.polyfit(x_list, y_list, 1)
+polinomio = np.poly1d(coeficientes)
+
+# Generar puntos para la linea de ajuste
+x_ajuste = np.linspace(min(x_list), max(x_list), 100)
+y_ajuste = polinomio(x_ajuste)
+
+# Crear la grafica
+plt.figure(figsize=(10,10))
+plt.scatter(x_list, y_list, label= 'Datos', color= 'coral', s= 50)
+plt.plot(x_ajuste, y_ajuste, label=f'Ajuste lineal: y= {coeficientes[0]:.2f}x +{coeficientes[1]:.2f}', color= 'green', linewidth=3)
+plt.xlabel('x')
+plt.ylabel('y')
+plt.title('Recta con ajuste lineal')
+plt.legend()
+plt.grid(True, alpha=0.3)
+plt.show()
+
+# Mostrar ecuacion y coeficiente de correlación
+print(f"Ecuación: y = {coeficientes[0]:.3f}x + {coeficientes[1]:.3f}")
+print(f"R² = {np.corrcoef(x_list, y_list)[0,1]**2:.3f}")
+
+# Grafica de ajuste exponencial
+# Definición de listas
+Dias_de_cultivo = [1, 2, 3, 4, 5, 6]
+Millones_de_bacterias = [1.6, 4.5, 13.8, 40.2, 125, 300]
+
+# Ajuste exponencial y = a * e^(b*x)
+# Transformamos a ln(y) = ln(a) + b*x
+y_log = np.log(Millones_de_bacterias)
+coeficientes = np.polyfit(Dias_de_cultivo, y_log, 1)
+a, b = np.exp(coeficientes)
+
+# Generamos los puntos para la curva de ajuste
+x_ajuste = np.linspace(min(Dias_de_cultivo), max(Dias_de_cultivo), 100)
+y_ajuste_log = a * np.exp(b * x_ajuste)
+
+# Grafica
+plt.figure(figsize=(10,8))
+plt.scatter(Dias_de_cultivo, Millones_de_bacterias, label='Datos', color='pink', s=50)
+plt.plot(x_ajuste, y_ajuste_log, label=f'Ajuste exponencial: y = {a:.2f} * e^({b:.2f}x)', color = 'blue', linewidth=2)
+plt.xlabel('Dias de cultivo')
+plt.ylabel('Millones de bacterias')
+plt.title('Ajuste exponencial')
+plt.legend()
+plt.grid(True, alpha=0.3)
+plt.show()
