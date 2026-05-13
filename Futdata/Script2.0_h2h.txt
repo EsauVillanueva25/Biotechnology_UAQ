@@ -1,0 +1,204 @@
+#!/usr/bin/env bash
+# =====================================================
+# Script: h2h_stats.sh
+# Busca desde temporada actual hacia atras
+# hasta juntar 10 partidos
+# =====================================================
+
+API_KEY="2e643496cc848cfce5e6b0943e403d85"
+BASE_URL="https://v3.football.api-sports.io"
+
+GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'
+CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
+
+fetch() {
+  curl -s -H "x-apisports-key: ${API_KEY}" "${BASE_URL}/$1"
+}
+
+head2head() {
+  local id1="$1"
+  local id2="$2"
+  local nombre1="$3"
+  local nombre2="$4"
+
+  echo -e "\n${BOLD}${GREEN}=================================================${NC}"
+  echo -e "${BOLD}${CYAN}  HEAD TO HEAD: $nombre1  vs  $nombre2${NC}"
+  echo -e "${BOLD}${GREEN}=================================================${NC}\n"
+
+  # Temporada actual y hacia atras
+  local current_year
+  current_year=$(date +%Y)
+
+  # Recolectar partidos temporada por temporada
+  local all_json="[]"
+  local count=0
+  local season=$current_year
+
+  while [ "$count" -lt 10 ] && [ "$season" -ge 2010 ]; do
+    echo -e "${YELLOW}  Buscando temporada $season...${NC}" >&2
+
+    local resp
+    resp=$(fetch "fixtures/headtohead?h2h=${id1}-${id2}&season=${season}")
+
+    # Verificar si hubo error de API
+    local api_error
+    api_error=$(echo "$resp" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+errs=d.get('errors',{})
+print(list(errs.values())[0] if errs else '')
+" 2>/dev/null)
+
+    if [ -n "$api_error" ]; then
+      echo -e "${RED}  Error API: $api_error${NC}" >&2
+      break
+    fi
+
+    # Combinar con los anteriores
+    all_json=$(python3 -c "
+import json, sys
+
+existing = json.loads('''$all_json''')
+resp_raw = sys.stdin.read()
+new_data = json.loads(resp_raw)
+new_matches = new_data.get('response', [])
+
+# Solo agregar partidos FINISHED
+finished = [m for m in new_matches if m['fixture']['status']['short'] == 'FT']
+combined = existing + finished
+# Ordenar por fecha descendente
+combined.sort(key=lambda m: m['fixture']['date'], reverse=True)
+print(json.dumps(combined))
+" <<< "$resp")
+
+    count=$(echo "$all_json" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))")
+    echo -e "  Partidos acumulados: $count" >&2
+
+    season=$((season - 1))
+  done
+
+  # Tomar solo los 10 mas recientes y mostrar
+  echo "$all_json" | python3 -c "
+import json, sys
+
+all_matches = json.load(sys.stdin)
+matches = all_matches[:10]
+
+if not matches:
+    print('  No se encontraron enfrentamientos directos.')
+    sys.exit(0)
+
+BOLD   = '\033[1m'
+CYAN   = '\033[0;36m'
+GREEN  = '\033[0;32m'
+RED    = '\033[0;31m'
+YELLOW = '\033[1;33m'
+NC     = '\033[0m'
+
+id1 = $id1
+id2 = $id2
+
+wins_a = wins_b = draws = 0
+total_am_a = total_am_b = 0
+total_co_a = total_co_b = 0
+btts_count = 0
+
+print(f'{BOLD}  Ultimos {len(matches)} enfrentamientos (mas reciente primero):{NC}\n')
+
+for idx, m in enumerate(matches, 1):
+    fixture = m['fixture']
+    teams   = m['teams']
+    goals   = m['goals']
+    stats   = m.get('statistics', [])
+
+    fecha    = fixture['date'][:10]
+    liga     = m['league']['name']
+    home     = teams['home']['name']
+    away     = teams['away']['name']
+    gh       = goals['home'] if goals['home'] is not None else '?'
+    ga       = goals['away'] if goals['away'] is not None else '?'
+
+    # Ganador
+    if not isinstance(gh, int) or not isinstance(ga, int):
+        resultado = f'{YELLOW}Sin datos{NC}'
+    elif gh > ga:
+        if teams['home']['id'] == id1: wins_a += 1
+        else: wins_b += 1
+        resultado = f'{GREEN}Gano {home}{NC}'
+    elif ga > gh:
+        if teams['away']['id'] == id1: wins_a += 1
+        else: wins_b += 1
+        resultado = f'{GREEN}Gano {away}{NC}'
+    else:
+        draws += 1
+        resultado = f'{YELLOW}Empate{NC}'
+
+    # BTTS
+    btts = isinstance(gh, int) and isinstance(ga, int) and gh > 0 and ga > 0
+    if btts: btts_count += 1
+
+    # Estadisticas por equipo
+    am_h = am_a = co_h = co_a = 0
+    for ts in stats:
+        is_home = (ts['team']['id'] == teams['home']['id'])
+        for s in ts['statistics']:
+            val = s['value'] or 0
+            if s['type'] == 'Yellow Cards':
+                if is_home: am_h = val
+                else: am_a = val
+            if s['type'] == 'Corner Kicks':
+                if is_home: co_h = val
+                else: co_a = val
+
+    # Acumular orientado a Equipo A y Equipo B
+    if teams['home']['id'] == id1:
+        total_am_a += am_h; total_am_b += am_a
+        total_co_a += co_h; total_co_b += co_a
+    else:
+        total_am_b += am_h; total_am_a += am_a
+        total_co_b += co_h; total_co_a += co_a
+
+    btts_str = f'{GREEN}Si{NC}' if btts else f'{RED}No{NC}'
+
+    print(f'  {BOLD}[{idx:>2}]{NC} {fecha} | {liga}')
+    print(f'       {home:28} {gh}  -  {ga}  {away}')
+    print(f'       Resultado    : {resultado}')
+    print(f'       Amarillas    : {home[:18]} {am_h} | {am_a} {away[:18]}')
+    print(f'       Corners      : {home[:18]} {co_h} | {co_a} {away[:18]}')
+    print(f'       Ambos anotan : {btts_str}')
+    print()
+
+total = len(matches)
+nombre1 = '$nombre1'
+nombre2 = '$nombre2'
+
+print('-' * 52)
+print(f'{BOLD}{CYAN}  RESUMEN ULTIMOS {total} ENFRENTAMIENTOS{NC}')
+print('-' * 52)
+print(f'  Victorias {nombre1[:15]:<15} : {GREEN}{wins_a}{NC}')
+print(f'  Victorias {nombre2[:15]:<15} : {GREEN}{wins_b}{NC}')
+print(f'  Empates              : {YELLOW}{draws}{NC}')
+print(f'  Ambos anotan (BTTS)  : {btts_count}/{total} ({round(btts_count/total*100)}%)')
+print(f'  Amarillas prom {nombre1[:6]:<6} : {round(total_am_a/total,1)} por partido')
+print(f'  Amarillas prom {nombre2[:6]:<6} : {round(total_am_b/total,1)} por partido')
+print(f'  Corners prom   {nombre1[:6]:<6} : {round(total_co_a/total,1)} por partido')
+print(f'  Corners prom   {nombre2[:6]:<6} : {round(total_co_b/total,1)} por partido')
+print('-' * 52)
+"
+}
+
+# ---- Menu ----
+echo -e "\n${BOLD}${GREEN}  HEAD TO HEAD STATS${NC}\n"
+echo -e "${YELLOW}  Tip: usa buscar_equipo.sh para encontrar los IDs${NC}\n"
+
+echo -ne "${BOLD}ID Equipo A:${NC} "
+read -r id_a
+echo -ne "${BOLD}Nombre Equipo A:${NC} "
+read -r nombre_a
+
+echo -ne "${BOLD}ID Equipo B:${NC} "
+read -r id_b
+echo -ne "${BOLD}Nombre Equipo B:${NC} "
+read -r nombre_b
+
+head2head "$id_a" "$id_b" "$nombre_a" "$nombre_b"
