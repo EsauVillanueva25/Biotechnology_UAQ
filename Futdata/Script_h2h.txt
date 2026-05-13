@@ -1,0 +1,229 @@
+#!/usr/bin/env bash
+# =====================================================
+# Script: h2h_stats.sh
+# API:    api-football.com (registro gratuito)
+# Registro: https://dashboard.api-football.com/register
+# =====================================================
+
+API_KEY="2e643496cc848cfce5e6b0943e403d85"
+BASE_URL="https://v3.football.api-sports.io"
+
+# Colores
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
+CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
+
+fetch() {
+  curl -s -H "x-apisports-key: ${API_KEY}" "${BASE_URL}/$1"
+}
+
+# ---- Buscar equipo por nombre ----
+buscar_equipo() {
+  local nombre="$1"
+  echo -e "${YELLOW}Buscando equipo: $nombre...${NC}" >&2
+  local result
+  result=$(fetch "teams?search=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$nombre'))")")
+  echo "$result"
+}
+
+# ---- Obtener ID de equipo ----
+get_team_id() {
+  local nombre="$1"
+  buscar_equipo "$nombre" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+teams = data.get('response', [])
+if not teams:
+    print('NOT_FOUND')
+    sys.exit(0)
+# Muestra opciones si hay más de uno
+for i, t in enumerate(teams[:5]):
+    tid  = t['team']['id']
+    tname = t['team']['name']
+    tcountry = t['team']['country']
+    print(f'{i}) [{tid}] {tname} ({tcountry})')
+"
+}
+
+# ---- Head to Head con estadísticas detalladas ----
+head2head() {
+  local id1="$1"
+  local id2="$2"
+  local nombre1="$3"
+  local nombre2="$4"
+
+  echo -e "\n${BOLD}${GREEN}══════════════════════════════════════════════════${NC}"
+  echo -e "${BOLD}${CYAN}  ⚽  HEAD TO HEAD: $nombre1  vs  $nombre2${NC}"
+  echo -e "${BOLD}${GREEN}══════════════════════════════════════════════════${NC}\n"
+
+  # Obtener últimos 10 enfrentamientos directos
+  local h2h_data
+  h2h_data=$(fetch "fixtures/headtohead?h2h=${id1}-${id2}&last=10")
+
+  echo "$h2h_data" | python3 -c "
+import json, sys
+
+data = json.load(sys.stdin)
+matches = data.get('response', [])
+
+if not matches:
+    print('  No se encontraron enfrentamientos directos.')
+    sys.exit(0)
+
+# Colores ANSI
+BOLD   = '\033[1m'
+CYAN   = '\033[0;36m'
+GREEN  = '\033[0;32m'
+RED    = '\033[0;31m'
+YELLOW = '\033[1;33m'
+NC     = '\033[0m'
+
+# Acumuladores para resumen
+wins_a = wins_b = draws = 0
+total_amarillas_a = total_amarillas_b = 0
+total_corners_a   = total_corners_b   = 0
+btts_count = 0   # Both Teams To Score
+id1 = $id1
+id2 = $id2
+
+print(f'{BOLD}  Últimos {len(matches)} enfrentamientos directos:{NC}\n')
+
+for idx, m in enumerate(reversed(matches), 1):
+    fixture  = m['fixture']
+    teams    = m['teams']
+    goals    = m['goals']
+    score    = m['score']
+    stats    = m.get('statistics', [])
+
+    fecha    = fixture['date'][:10]
+    liga     = m['league']['name']
+    home     = teams['home']['name']
+    away     = teams['away']['name']
+    gh       = goals['home'] if goals['home'] is not None else '?'
+    ga       = goals['away'] if goals['away'] is not None else '?'
+
+    # Determinar ganador
+    if goals['home'] is None or goals['away'] is None:
+        resultado = f'{YELLOW}Sin datos{NC}'
+    elif goals['home'] > goals['away']:
+        ganador = home
+        wins_a  += 1 if teams['home']['id'] == id1 else 0
+        wins_b  += 1 if teams['home']['id'] == id2 else 0
+        resultado = f'{GREEN}Ganó {ganador}{NC}'
+    elif goals['away'] > goals['home']:
+        ganador = away
+        wins_a  += 1 if teams['away']['id'] == id1 else 0
+        wins_b  += 1 if teams['away']['id'] == id2 else 0
+        resultado = f'{GREEN}Ganó {ganador}{NC}'
+    else:
+        draws += 1
+        resultado = f'{YELLOW}Empate{NC}'
+
+    # BTTS (ambos anotan)
+    btts = False
+    if isinstance(gh, int) and isinstance(ga, int):
+        btts = gh > 0 and ga > 0
+        if btts:
+            btts_count += 1
+
+    # Extraer estadísticas del partido
+    amarillas_h = amarillas_a_team = 0
+    corners_h   = corners_a_team   = 0
+
+    for team_stat in stats:
+        team_id = team_stat['team']['id']
+        is_home = (team_id == teams['home']['id'])
+        for s in team_stat['statistics']:
+            val = s['value'] if s['value'] is not None else 0
+            if s['type'] == 'Yellow Cards':
+                if is_home:
+                    amarillas_h = val
+                else:
+                    amarillas_a_team = val
+            if s['type'] == 'Corner Kicks':
+                if is_home:
+                    corners_h = val
+                else:
+                    corners_a_team = val
+
+    # Acumular por equipo (A = id1, B = id2)
+    if teams['home']['id'] == id1:
+        total_amarillas_a += amarillas_h;   total_amarillas_b += amarillas_a_team
+        total_corners_a   += corners_h;     total_corners_b   += corners_a_team
+    else:
+        total_amarillas_b += amarillas_h;   total_amarillas_a += amarillas_a_team
+        total_corners_b   += corners_h;     total_corners_a   += corners_a_team
+
+    btts_str = f'{GREEN}✓ Ambos anotaron{NC}' if btts else f'{RED}✗ No ambos{NC}'
+
+    print(f'  {BOLD}Partido {idx:>2}{NC} | {fecha} | {liga}')
+    print(f'         {home:28} {gh}  -  {ga}  {away}')
+    print(f'         Resultado  : {resultado}')
+    print(f'         Amarillas  : {home[:15]} {amarillas_h} | {amarillas_a_team} {away[:15]}')
+    print(f'         Corners    : {home[:15]} {corners_h} | {corners_a_team} {away[:15]}')
+    print(f'         Ambos Anotan: {btts_str}')
+    print()
+
+# ---- RESUMEN ----
+total = len(matches)
+print(f'{"═"*52}')
+print(f'{BOLD}{CYAN}  RESUMEN DE LOS ÚLTIMOS {total} ENFRENTAMIENTOS{NC}')
+print(f'{"═"*52}')
+print(f'  Victorias Equipo A : {GREEN}{wins_a}{NC}')
+print(f'  Victorias Equipo B : {GREEN}{wins_b}{NC}')
+print(f'  Empates            : {YELLOW}{draws}{NC}')
+print(f'  Ambos Anotan (BTTS): {btts_count}/{total} partidos ({round(btts_count/total*100)}%)')
+print(f'  Amarillas prom. A  : {round(total_amarillas_a/total, 1)} por partido')
+print(f'  Amarillas prom. B  : {round(total_amarillas_b/total, 1)} por partido')
+print(f'  Corners prom. A    : {round(total_corners_a/total, 1)} por partido')
+print(f'  Corners prom. B    : {round(total_corners_b/total, 1)} por partido')
+print(f'{"═"*52}')
+"
+}
+
+# ---- Flujo principal ----
+echo -e "\n${BOLD}${GREEN}⚽  COMPARADOR HEAD TO HEAD  ⚽${NC}\n"
+
+echo -ne "${BOLD}Nombre del Equipo A:${NC} "
+read -r equipo_a
+
+echo ""
+get_team_id "$equipo_a"
+echo -ne "\n${BOLD}Elige número del Equipo A:${NC} "
+read -r idx_a
+
+ID_A=$(buscar_equipo "$equipo_a" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+teams = data.get('response', [])
+print(teams[$idx_a]['team']['id'])
+")
+NOMBRE_A=$(buscar_equipo "$equipo_a" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+teams = data.get('response', [])
+print(teams[$idx_a]['team']['name'])
+")
+
+echo ""
+echo -ne "${BOLD}Nombre del Equipo B:${NC} "
+read -r equipo_b
+
+echo ""
+get_team_id "$equipo_b"
+echo -ne "\n${BOLD}Elige número del Equipo B:${NC} "
+read -r idx_b
+
+ID_B=$(buscar_equipo "$equipo_b" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+teams = data.get('response', [])
+print(teams[$idx_b]['team']['id'])
+")
+NOMBRE_B=$(buscar_equipo "$equipo_b" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+teams = data.get('response', [])
+print(teams[$idx_b]['team']['name'])
+")
+
+head2head "$ID_A" "$ID_B" "$NOMBRE_A" "$NOMBRE_B"
