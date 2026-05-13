@@ -165,9 +165,9 @@ for idx, m in enumerate(reversed(matches), 1):
 
 # ---- RESUMEN ----
 total = len(matches)
-print(f'{"═"*52}')
+print('-'*52)
 print(f'{BOLD}{CYAN}  RESUMEN DE LOS ÚLTIMOS {total} ENFRENTAMIENTOS{NC}')
-print(f'{"═"*52}')
+print('-'*52)
 print(f'  Victorias Equipo A : {GREEN}{wins_a}{NC}')
 print(f'  Victorias Equipo B : {GREEN}{wins_b}{NC}')
 print(f'  Empates            : {YELLOW}{draws}{NC}')
@@ -176,7 +176,7 @@ print(f'  Amarillas prom. A  : {round(total_amarillas_a/total, 1)} por partido')
 print(f'  Amarillas prom. B  : {round(total_amarillas_b/total, 1)} por partido')
 print(f'  Corners prom. A    : {round(total_corners_a/total, 1)} por partido')
 print(f'  Corners prom. B    : {round(total_corners_b/total, 1)} por partido')
-print(f'{"═"*52}')
+print('-'*52)
 "
 }
 
